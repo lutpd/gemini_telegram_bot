@@ -19,10 +19,13 @@ logger = logging.getLogger(__name__)
 # --- Gemini Configuration ---
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
-    # Use 'gemini-2.0-flash-latest' for the latest Flash model
-    # If you face issues, try 'gemini-pro'
-    gemini_model = genai.GenerativeModel('gemini-2.0-flash-latest')
-    logger.info("Gemini model configured.")
+    
+    # --- MODEL IDENTIFIER CHANGED TO 'gemini-2.0-flash' ---
+    # Based on your screenshot, this model is accessible via the v1beta API.
+    # If you encounter 'NotFound' errors, ensure your project has access to this specific beta model.
+    gemini_model = genai.GenerativeModel('gemini-2.0-flash') 
+    
+    logger.info(f"Gemini model '{gemini_model.model_name}' configured.")
 else:
     logger.error("GEMINI_API_KEY not found in environment variables.")
     gemini_model = None # Or raise an error to prevent bot from starting
@@ -37,8 +40,10 @@ user_gemini_chats = {}
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Sends a welcome message when the command /start is issued."""
     user = update.effective_user
+    
+    # --- BOT GREETING CHANGED TO REFLECT 'Google Gemini 2.0 Flash' ---
     await update.message.reply_html(
-        f"Hi {user.mention_html()}! I'm a bot powered by Google Gemini 2.0 Flash. "
+        f"Hi {user.mention_html()}! I'm a bot powered by Google Gemini 2.0 Flash. " 
         "Send me a message and I'll try to respond!",
     )
     logger.info(f"User {user.id} ({user.full_name}) started the bot.")
@@ -46,7 +51,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handles incoming text messages and sends them to Gemini."""
     if not gemini_model:
-        await update.message.reply_text("Sorry, Gemini AI is not configured. Please check the API key.")
+        await update.message.reply_text("Sorry, Gemini AI is not configured. Please check the API key and model name.")
         return
 
     chat_id = update.effective_chat.id
@@ -55,8 +60,19 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     # Get or create a Gemini chat session for this user
     if chat_id not in user_gemini_chats:
-        user_gemini_chats[chat_id] = gemini_model.start_chat(history=[])
-        logger.info(f"New Gemini chat session started for chat_id: {chat_id}")
+        try:
+            # It's good practice to try starting the chat session within a try-except
+            # as model access issues often manifest here.
+            user_gemini_chats[chat_id] = gemini_model.start_chat(history=[])
+            logger.info(f"New Gemini chat session started for chat_id: {chat_id}")
+        except Exception as e:
+            logger.error(f"Error starting Gemini chat for chat_id {chat_id}: {e}")
+            await update.message.reply_text(
+                "Oops! I couldn't start a chat with Gemini. The model might not be available or there's an API issue. "
+                "Please check the Render logs for details."
+            )
+            return
+
 
     try:
         # Send message to Gemini and get response
@@ -70,7 +86,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     except Exception as e:
         logger.error(f"Error interacting with Gemini for chat_id {chat_id}: {e}")
         await update.message.reply_text(
-            "Oops! I encountered an error while talking to Gemini. Please try again."
+            "Oops! I encountered an error while talking to Gemini. The model might not be available or there's an API issue. "
+            "Please try again."
         )
 
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
