@@ -19,9 +19,9 @@ logger = logging.getLogger(__name__)
 # --- Gemini Configuration ---
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
-    # Use 'gemini-1.5-flash-latest' for the latest Flash model
+    # Use 'gemini-2.0-flash-latest' for the latest Flash model
     # If you face issues, try 'gemini-pro'
-    gemini_model = genai.GenerativeModel('gemini-1.5-flash-latest')
+    gemini_model = genai.GenerativeModel('gemini-2.0-flash-latest')
     logger.info("Gemini model configured.")
 else:
     logger.error("GEMINI_API_KEY not found in environment variables.")
@@ -38,7 +38,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Sends a welcome message when the command /start is issued."""
     user = update.effective_user
     await update.message.reply_html(
-        f"Hi {user.mention_html()}! I'm a bot powered by Google Gemini 1.5 Flash. "
+        f"Hi {user.mention_html()}! I'm a bot powered by Google Gemini 2.0 Flash. "
         "Send me a message and I'll try to respond!",
     )
     logger.info(f"User {user.id} ({user.full_name}) started the bot.")
