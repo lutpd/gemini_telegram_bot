@@ -1,5 +1,3 @@
---- START OF FILE bot.py ---
-
 import os
 import logging
 from telegram import Update, ChatMember, ChatMemberUpdated
@@ -341,4 +339,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
---- END OF FILE bot.py ---
