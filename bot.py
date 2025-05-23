@@ -3,8 +3,9 @@ import logging
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 # Removed: from telegram.constants import ParseMode # Still no ParseMode for plain text
-
 import google.generativeai as genai
+# If you decide to add a delay between messages (optional), uncomment this:
+# import asyncio 
 
 # --- Configuration ---
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
@@ -14,7 +15,8 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 MAX_USER_MESSAGE_CHARS = 3000
 
 # Maximum output message length for Telegram (Telegram's API limit is 4096 characters)
-MAX_TELEGRAM_MESSAGE_CHARS = 4096 
+# We'll use a slightly smaller value to be safe and leave room for "Part X/Y" notes.
+MAX_TELEGRAM_MESSAGE_CHARS = 4000 
 
 # Set up logging
 logging.basicConfig(
@@ -28,8 +30,9 @@ if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
     
     # Using 'gemini-2.0-flash' as per your screenshot and preference.
-    # If the "model not found" error persists, this is the first place to check.
-    # Try 'gemini-1.5-flash-latest' or 'gemini-1.5-pro-latest' if 2.0-flash is giving issues.
+    # If the "model not found" error persists, this 'gemini-2.0-flash'
+    # might not be available to your specific Google Cloud project/account yet.
+    # In that case, you'd need to try 'gemini-1.5-flash-latest' or 'gemini-1.5-pro-latest'.
     gemini_model = genai.GenerativeModel('gemini-2.0-flash') 
     
     logger.info(f"Gemini model '{gemini_model.model_name}' configured.")
@@ -39,6 +42,30 @@ else:
 
 # Dictionary to store chat sessions for conversation context
 user_gemini_chats = {}
+
+# --- Helper function to split long messages ---
+def split_message(text, max_length):
+    """Splits a long string into chunks that don't exceed max_length,
+    trying to split at the last newline or space character.
+    """
+    chunks = []
+    remaining_text = text
+    
+    while len(remaining_text) > max_length:
+        # Find the last newline within the allowed length
+        split_point = remaining_text.rfind('\n', 0, max_length)
+        if split_point == -1: # No newline found, try last space
+            split_point = remaining_text.rfind(' ', 0, max_length)
+        if split_point == -1: # No space found either, force split at max_length
+            split_point = max_length
+
+        chunks.append(remaining_text[:split_point].strip())
+        remaining_text = remaining_text[split_point:].strip()
+    
+    if remaining_text: # Add any remaining part as the last chunk
+        chunks.append(remaining_text)
+        
+    return chunks
 
 # --- Telegram Bot Handlers ---
 
@@ -89,15 +116,21 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         gemini_response = response.text
         logger.info(f"Gemini response for {chat_id}: {gemini_response}")
 
-        # --- NEW: Check and truncate Gemini's response for Telegram's limit ---
+        # --- NEW: Split Gemini's response into multiple messages if too long ---
         if len(gemini_response) > MAX_TELEGRAM_MESSAGE_CHARS:
-            logger.warning(f"Gemini response for {chat_id} is too long ({len(gemini_response)} chars). Truncating.")
-            # Truncate and add a note, leaving some room for the note itself
-            truncated_message = gemini_response[:MAX_TELEGRAM_MESSAGE_CHARS - 60] # Reserve 60 chars for the note
-            truncated_message += "\n\n(Response truncated due to length limit.)"
-            await update.message.reply_text(truncated_message)
+            logger.warning(f"Gemini response for {chat_id} is too long ({len(gemini_response)} chars). Splitting into multiple messages.")
+            
+            message_parts = split_message(gemini_response, MAX_TELEGRAM_MESSAGE_CHARS)
+            
+            for i, part in enumerate(message_parts):
+                # Add a "Part X/Y" header if there's more than one part
+                part_header = f"(Part {i+1}/{len(message_parts)})\n\n" if len(message_parts) > 1 else ""
+                await update.message.reply_text(f"{part_header}{part}")
+                # Optional: Add a small delay between messages to avoid potential flooding limits
+                # and make it easier for Telegram to deliver them.
+                # await asyncio.sleep(0.5) 
         else:
-            # Send as plain text (no Markdown/HTML parsing)
+            # Send as a single plain text message
             await update.message.reply_text(gemini_response) 
 
     except Exception as e:
@@ -131,7 +164,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 "Please ensure your GEMINI_API_KEY is correct and has the necessary permissions."
             )
         elif "bad request" in error_str:
-            # This is the catch-all for other 400s not specifically handled by previous checks
             error_message = (
                 "Gemini received a bad request. This might be a temporary issue or an unusual input. "
                 "Please try rephrasing your message."
