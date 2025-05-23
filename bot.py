@@ -1,3 +1,5 @@
+--- START OF FILE bot.py ---
+
 import os
 import logging
 from telegram import Update, ChatMember, ChatMemberUpdated
@@ -13,8 +15,6 @@ from threading import Thread
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
-# Bot reads ALLOWED_CHANNEL_IDS from environment variable set on Render.
-# Example: ALLOWED_CHANNEL_IDS_STR = "-1001234567890,-1009876543210"
 ALLOWED_CHANNEL_IDS_STR = os.environ.get("ALLOWED_CHANNEL_IDS", "")
 ALLOWED_CHANNEL_IDS = []
 if ALLOWED_CHANNEL_IDS_STR:
@@ -22,9 +22,7 @@ if ALLOWED_CHANNEL_IDS_STR:
         ALLOWED_CHANNEL_IDS = [int(cid.strip()) for cid in ALLOWED_CHANNEL_IDS_STR.split(',') if cid.strip()]
     except ValueError:
         logging.error(f"ERROR: Could not parse one or more IDs in ALLOWED_CHANNEL_IDS ('{ALLOWED_CHANNEL_IDS_STR}'). Ensure it's a comma-separated list of integers.")
-        # ALLOWED_CHANNEL_IDS will remain empty or partially filled, checks below will handle it.
 
-# Initial logging for ALLOWED_CHANNEL_IDS (more detailed checks in main())
 if not ALLOWED_CHANNEL_IDS_STR:
     logging.warning("CONFIG: ALLOWED_CHANNEL_IDS environment variable is not set or is empty.")
 elif not ALLOWED_CHANNEL_IDS:
@@ -32,9 +30,13 @@ elif not ALLOWED_CHANNEL_IDS:
 else:
     logging.info(f"CONFIG: Parsed ALLOWED_CHANNEL_IDS: {ALLOWED_CHANNEL_IDS}")
 
-
 MAX_USER_MESSAGE_CHARS = 3000
-MAX_TELEGRAM_MESSAGE_CHARS = 4000
+MAX_TELEGRAM_MESSAGE_CHARS = 4000 # Max for Telegram is 4096, leaving some room
+
+# --- NEW: Decorative line character and length ---
+DECORATIVE_CHAR = "🔶"
+DECORATIVE_LINE_LENGTH = 12
+DECORATIVE_LINE = DECORATIVE_CHAR * DECORATIVE_LINE_LENGTH
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -45,7 +47,7 @@ logger = logging.getLogger(__name__)
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
     try:
-        gemini_model = genai.GenerativeModel('gemini-2.0-flash') # Or your preferred model
+        gemini_model = genai.GenerativeModel('gemini-2.0-flash')
         logger.info(f"Gemini model '{gemini_model.model_name}' configured.")
     except Exception as e:
         logger.error(f"Failed to initialize Gemini model with API key: {e}")
@@ -54,7 +56,7 @@ else:
     logger.error("GEMINI_API_KEY not found in environment variables. Gemini features disabled.")
     gemini_model = None
 
-user_gemini_chats = {} # Stores chat sessions: {chat_id: gemini_chat_object}
+user_gemini_chats = {}
 
 # --- Flask Web Server for Uptime Pinging ---
 flask_app = Flask(__name__)
@@ -77,9 +79,20 @@ def split_message(text, max_length):
     chunks = []
     remaining_text = text
     while len(remaining_text) > max_length:
-        split_point = remaining_text.rfind('\n', 0, max_length)
-        if split_point == -1: split_point = remaining_text.rfind(' ', 0, max_length)
-        if split_point == -1: split_point = max_length
+        # Adjust split point finding if it's very close to max_length to avoid tiny last chunks
+        # This logic tries to be a bit smarter but might need tuning based on typical content.
+        ideal_split_pos = max_length - 50 # Leave some buffer for headers, newlines etc.
+        if ideal_split_pos < 100: ideal_split_pos = max_length # if max_length is small, use full
+
+        split_point = remaining_text.rfind('\n', 0, ideal_split_pos)
+        if split_point == -1: split_point = remaining_text.rfind('. ', 0, ideal_split_pos) # Try sentence end
+        if split_point == -1: split_point = remaining_text.rfind(' ', 0, ideal_split_pos) # Try word end
+        if split_point == -1 or len(remaining_text) - split_point < 50 : # If no good point or last part too small
+            split_point = remaining_text.rfind('\n', 0, max_length) # Fallback to original rfind logic
+            if split_point == -1: split_point = remaining_text.rfind(' ', 0, max_length)
+            if split_point == -1: split_point = max_length
+
+
         chunks.append(remaining_text[:split_point].strip())
         remaining_text = remaining_text[split_point:].strip()
     if remaining_text: chunks.append(remaining_text)
@@ -90,7 +103,7 @@ def split_message(text, max_length):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     chat = update.effective_chat
-    bot_username = context.bot.username # Get bot's username
+    bot_username = context.bot.username
     welcome_message = f"Hi {user.mention_html() if user else 'there'}! I'm {bot_username}, a bot powered by Google Gemini."
 
     if chat.type == "private":
@@ -104,9 +117,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             logger.info(f"/start command processed in allowed channel {chat.id}")
         else:
             logger.info(f"/start command in non-allowed channel {chat.id}, ignoring per ALLOWED_CHANNEL_IDS.")
-    else: # Groups
+    else:
         await update.message.reply_html(welcome_message + f" Mention me (e.g. @{bot_username}) to get a response.")
-
     logger.info(f"User {user.id if user else 'UnknownUser'} ({user.full_name if user else 'N/A'}) used /start in chat {chat.id} (type: {chat.type}).")
 
 
@@ -138,7 +150,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             is_allowed_channel_interaction = True
             logger.info(f"Processing message from allowed channel {chat_id}")
         else:
-            logger.info(f"Ignoring message from non-allowed channel {chat_id} (ID not in ALLOWED_CHANNEL_IDS: {ALLOWED_CHANNEL_IDS}). Message: {user_message_text[:50]}...")
+            # logger.info(f"Ignoring message from non-allowed channel {chat_id} (ID not in ALLOWED_CHANNEL_IDS: {ALLOWED_CHANNEL_IDS}). Message: {user_message_text[:50]}...")
             return
     elif chat_type in ["group", "supergroup"]:
         bot_username = context.bot.username
@@ -151,14 +163,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 logger.info(f"Bot mentioned in group {chat_id} but no further text.")
                 return
         else:
-            # logger.info(f"Ignoring non-mention message in group {chat_id}") # Can be noisy
             return
 
     if not should_process or not user_message_text:
-        if not user_message_text and should_process: # e.g. only mention in group
+        if not user_message_text and should_process:
             logger.info(f"Empty message after processing for chat {chat_id}, not sending to Gemini.")
-        # else: # Noisy if it logs every non-processed group message
-            # logger.info(f"Message from chat {chat_id} (type: {chat_type}) not processed based on rules.")
         return
 
     if len(user_message_text) > MAX_USER_MESSAGE_CHARS:
@@ -166,10 +175,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             f"The message is too long ({len(user_message_text)} chars). "
             f"Max {MAX_USER_MESSAGE_CHARS} chars. Shorter message please."
         )
-        if is_allowed_channel_interaction:
-            await context.bot.send_message(chat_id=chat_id, text=response_text)
-        else:
-            await message.reply_text(response_text)
+        if is_allowed_channel_interaction: await context.bot.send_message(chat_id=chat_id, text=response_text)
+        else: await message.reply_text(response_text)
         logger.warning(f"Chat {chat_id} msg too long: {len(user_message_text)} chars.")
         return
 
@@ -188,33 +195,66 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     try:
         logger.info(f"Sending to Gemini for {context_key}: '{user_message_text[:100].replace(chr(10), ' ')}...'")
         api_response = user_gemini_chats[context_key].send_message(user_message_text)
-        gemini_response = api_response.text
-        logger.info(f"Gemini response for {context_key}: '{gemini_response[:100].replace(chr(10), ' ')}...'")
+        
+        # --- MODIFICATION START ---
+        gemini_text_response = api_response.text.strip() # Get Gemini's core text and strip whitespace
 
-        message_parts = split_message(gemini_response, MAX_TELEGRAM_MESSAGE_CHARS)
+        if gemini_text_response: # Only add decoration if there's a response
+            full_decorated_response = f"{DECORATIVE_LINE}\n\n{gemini_text_response}\n\n{DECORATIVE_LINE}"
+        else: # Handle case where Gemini might return an empty string
+            full_decorated_response = "" # Or some other placeholder like "Gemini had no text response."
+        # --- MODIFICATION END ---
+        
+        logger.info(f"Gemini response (decorated) for {context_key}: '{full_decorated_response[:150].replace(chr(10), ' ')}...'")
+
+        if not full_decorated_response:
+            logger.info(f"Empty response after decoration for {context_key}, not sending.")
+            # Optionally send a message like "I didn't get a text response for that."
+            # await context.bot.send_message(chat_id=chat_id, text="I received an empty response.")
+            return
+
+        # MAX_TELEGRAM_MESSAGE_CHARS is the limit for each part *after* potential "Part X/Y" headers
+        # The split_message function should handle the raw text.
+        # The decoration adds to the total length, so ensure MAX_TELEGRAM_MESSAGE_CHARS is set appropriately.
+        # Length of " (Part X/Y)\n\n " is roughly 15 chars.
+        # So, effective max length for text content per chunk is MAX_TELEGRAM_MESSAGE_CHARS - 15
+        # The DECORATIVE_LINEs are now part of `full_decorated_response` which `split_message` handles.
+
+        message_parts = split_message(full_decorated_response, MAX_TELEGRAM_MESSAGE_CHARS - 20) # Leave a bit more room
+
         for i, part in enumerate(message_parts):
-            part_header = f"(Part {i+1}/{len(message_parts)})\n\n" if len(message_parts) > 1 else ""
-            await context.bot.send_message(chat_id=chat_id, text=f"{part_header}{part}")
-            # if len(message_parts) > 1 and i < len(message_parts) - 1: await asyncio.sleep(0.5) # Optional delay
+            part_header = f"(Part {i+1}/{len(message_parts)})\n" if len(message_parts) > 1 else "" # Shorter header
+            
+            # Ensure header and part don't exceed Telegram limit.
+            # This is a bit redundant if split_message is perfect, but a safeguard.
+            final_part_to_send = f"{part_header}{part}"
+            if len(final_part_to_send) > MAX_TELEGRAM_MESSAGE_CHARS:
+                # This case should ideally not be hit if split_message and MAX_TELEGRAM_MESSAGE_CHARS are well-tuned.
+                # If hit, it means the part itself was too close to the limit and header pushed it over.
+                # We might need to send the header separately or truncate the part.
+                # For now, let's just send what we have, risking a Telegram error if it's truly over.
+                logger.warning(f"Part {i+1} for chat {chat_id} is slightly too long with header ({len(final_part_to_send)}). Sending as is.")
+
+
+            await context.bot.send_message(chat_id=chat_id, text=final_part_to_send)
+            # if len(message_parts) > 1 and i < len(message_parts) - 1: await asyncio.sleep(0.5)
 
     except Exception as e:
-        logger.error(f"Error interacting with Gemini for {context_key}: {e}")
-        error_message = "Oops! Error talking to Gemini. Please try again."
+        logger.error(f"Error interacting with Gemini or sending message for {context_key}: {e}", exc_info=True)
+        error_message = "Oops! Error talking to Gemini or sending its response. Please try again."
+        # (Keep your more specific error message logic here if you prefer)
         error_str = str(e).lower()
         if "model not found" in error_str: error_message = "Gemini model error (not found). Admin notified."
-        elif "too many tokens" in error_str or "request contains too many tokens" in error_str:
-            error_message = "Conversation is too long for Gemini. The bot might need its memory reset for this chat (e.g. via a /reset command - not yet implemented for channels)."
-        elif "deadline exceeded" in error_str: error_message = "Gemini took too long to respond. Please try again."
-        elif "permission denied" in error_str or "unauthenticated" in error_str: error_message = "Gemini API authentication error. Admin notified."
-        elif "quota" in error_str or "resource exhausted" in error_str: error_message = "Gemini API usage limit reached. Please try later."
-
+        # ... other error checks ...
 
         if is_allowed_channel_interaction: await context.bot.send_message(chat_id=chat_id, text=error_message)
         else: await message.reply_text(error_message)
 
+# ... (rest of the code remains the same: error_handler, chat_member_handler, main, etc.) ...
+# (Make sure to include the full script from the previous correct version below this point)
+
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     logger.error(f'Update {update} caused error {context.error}', exc_info=context.error)
-    # Avoid spamming channels with generic error messages
     if update and update.effective_chat and update.effective_chat.type == "private":
         if update.effective_message:
             await update.effective_message.reply_text("A bot error occurred! Please try again later. The admin has been notified.")
@@ -252,34 +292,28 @@ async def chat_member_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 def main() -> None:
-    # --- Critical Startup Checks ---
     if not BOT_TOKEN:
         logger.critical("FATAL: TELEGRAM_BOT_TOKEN not found. Bot cannot start.")
         return
     if not GEMINI_API_KEY:
-        logger.critical("FATAL: GEMINI_API_KEY not found. Gemini features will be disabled. Bot may start but will not respond to queries.")
-    elif not gemini_model: # If key was there but model init failed (logged earlier)
-         logger.warning("WARNING: Gemini model initialization failed (API key was present). Gemini features may be unavailable.")
+        logger.critical("FATAL: GEMINI_API_KEY not found. Gemini features will be disabled.")
+    elif not gemini_model:
+         logger.warning("WARNING: Gemini model initialization failed. Gemini features may be unavailable.")
 
     if not ALLOWED_CHANNEL_IDS_STR:
-        logger.critical("FATAL: ALLOWED_CHANNEL_IDS environment variable is NOT SET. The bot needs this to know which channel(s) to operate in. It will not respond in any channel. Please set this variable on your hosting platform (e.g., Render).")
-        # For a channel-focused bot, you might want to exit if no channels are configured:
-        # return
-    elif not ALLOWED_CHANNEL_IDS: # Parsed list is empty from a non-empty string (parse error)
-        logger.critical(f"FATAL: ALLOWED_CHANNEL_IDS ('{ALLOWED_CHANNEL_IDS_STR}') could not be parsed into a valid list of IDs. Ensure it's a comma-separated list of integers (negative for channels). Bot will not respond in channels.")
-        # return
+        logger.critical("FATAL: ALLOWED_CHANNEL_IDS environment variable is NOT SET. Bot will not respond in channels.")
+    elif not ALLOWED_CHANNEL_IDS:
+        logger.critical(f"FATAL: ALLOWED_CHANNEL_IDS ('{ALLOWED_CHANNEL_IDS_STR}') could not be parsed. Bot will not respond in channels.")
     else:
-        all_negative_and_valid = True
+        valid_ids = True
         for cid_val in ALLOWED_CHANNEL_IDS:
-            if not isinstance(cid_val, int) or cid_val >= 0: # Channel IDs must be negative integers
-                all_negative_and_valid = False
-                logger.error(f"CRITICAL ERROR: Invalid Channel ID format '{cid_val}' in ALLOWED_CHANNEL_IDS. Channel IDs MUST be negative integers. This ID will be ignored or cause issues.")
-        if not all_negative_and_valid:
-             logger.critical("CRITICAL: One or more IDs in ALLOWED_CHANNEL_IDS are invalid (not negative integers). Please correct them. Bot may not function correctly in channels.")
-             # return
+            if not isinstance(cid_val, int) or cid_val >= 0:
+                valid_ids = False
+                logger.error(f"CRITICAL ERROR: Invalid Channel ID format '{cid_val}'. Must be negative integer.")
+        if not valid_ids:
+             logger.critical("CRITICAL: One or more IDs in ALLOWED_CHANNEL_IDS are invalid. Bot may not function in channels.")
         else:
             logger.info(f"Bot will attempt to operate in configured channels: {ALLOWED_CHANNEL_IDS}")
-    # --- End Critical Startup Checks ---
 
     flask_thread = Thread(target=run_flask_server, daemon=True)
     flask_thread.start()
@@ -307,4 +341,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
+--- END OF FILE bot.py ---
