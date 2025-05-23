@@ -2,21 +2,19 @@ import os
 import logging
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
-# Removed: from telegram.constants import ParseMode # Still sending plain text as requested
+# Removed: from telegram.constants import ParseMode # Still no ParseMode for plain text
+
 import google.generativeai as genai
 
 # --- Configuration ---
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
-# Set a maximum input message length for your bot
-# This is a character limit. Gemini's limits are in tokens, which vary,
-# but this acts as a first line of defense against excessively long user inputs.
-# Adjust this value based on your needs and Gemini's actual token limits.
-MAX_USER_MESSAGE_CHARS = 3000 # Example: Roughly 3000 characters could be ~750 tokens.
-                              # Gemini 1.5 Flash has a context window of 128,000 tokens.
-                              # However, this also includes response history, so you might
-                              # hit the limit sooner if you have long conversations.
+# Maximum input message length for your bot (to prevent sending excessively long queries to Gemini)
+MAX_USER_MESSAGE_CHARS = 3000
+
+# Maximum output message length for Telegram (Telegram's API limit is 4096 characters)
+MAX_TELEGRAM_MESSAGE_CHARS = 4096 
 
 # Set up logging
 logging.basicConfig(
@@ -63,21 +61,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     user_message = update.message.text
     logger.info(f"User {chat_id} sent message: {user_message}")
 
-    # --- NEW: Check message length before sending to Gemini ---
+    # --- Check user message length before sending to Gemini ---
     if len(user_message) > MAX_USER_MESSAGE_CHARS:
         await update.message.reply_text(
             f"Your message is too long ({len(user_message)} characters). "
             f"I can only process messages up to {MAX_USER_MESSAGE_CHARS} characters at a time. "
             "Please try a shorter message."
         )
-        logger.warning(f"User {chat_id} sent message exceeding max length: {len(user_message)} chars.")
+        logger.warning(f"User {chat_id} sent message exceeding max input length: {len(user_message)} chars.")
         return # Stop processing this message
 
     if chat_id not in user_gemini_chats:
         try:
-            # Note: The 'history' list grows with each turn. If conversations get very long,
-            # this will eventually exceed Gemini's context window.
-            # For persistent context across spin-downs or very long convos, you'd need a database.
             user_gemini_chats[chat_id] = gemini_model.start_chat(history=[])
             logger.info(f"New Gemini chat session started for chat_id: {chat_id}")
         except Exception as e:
@@ -94,16 +89,22 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         gemini_response = response.text
         logger.info(f"Gemini response for {chat_id}: {gemini_response}")
 
-        # Sending as plain text (no Markdown/HTML parsing)
-        await update.message.reply_text(gemini_response) 
+        # --- NEW: Check and truncate Gemini's response for Telegram's limit ---
+        if len(gemini_response) > MAX_TELEGRAM_MESSAGE_CHARS:
+            logger.warning(f"Gemini response for {chat_id} is too long ({len(gemini_response)} chars). Truncating.")
+            # Truncate and add a note, leaving some room for the note itself
+            truncated_message = gemini_response[:MAX_TELEGRAM_MESSAGE_CHARS - 60] # Reserve 60 chars for the note
+            truncated_message += "\n\n(Response truncated due to length limit.)"
+            await update.message.reply_text(truncated_message)
+        else:
+            # Send as plain text (no Markdown/HTML parsing)
+            await update.message.reply_text(gemini_response) 
 
     except Exception as e:
         logger.error(f"Error interacting with Gemini for chat_id {chat_id}: {e}")
         
-        # --- NEW: More specific error messages based on common Gemini errors ---
         error_message = "Oops! I encountered an error while talking to Gemini. Please try again."
         
-        # Common Google API errors (often from google.api_core.exceptions)
         error_str = str(e).lower()
         if "too many tokens" in error_str or "request contains too many tokens" in error_str:
             error_message = (
@@ -130,12 +131,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 "Please ensure your GEMINI_API_KEY is correct and has the necessary permissions."
             )
         elif "bad request" in error_str:
-            # This is the catch-all for other 400s not specifically handled
+            # This is the catch-all for other 400s not specifically handled by previous checks
             error_message = (
                 "Gemini received a bad request. This might be a temporary issue or an unusual input. "
                 "Please try rephrasing your message."
             )
-
+            
         await update.message.reply_text(error_message)
 
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
