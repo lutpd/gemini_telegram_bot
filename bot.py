@@ -5,7 +5,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 import google.generativeai as genai
 from flask import Flask
 from threading import Thread
-from md2tgmd import escape
+from md2tgmd import convert
 
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
@@ -57,7 +57,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_html(welcome_message + " How can I help you today?")
     elif chat.type == "channel":
         if chat.id in ALLOWED_CHANNEL_IDS:
-            await context.bot.send_message(chat_id=chat.id, text=escape(f"{bot_username} is active in this channel. I will respond to messages posted here."), parse_mode="MarkdownV2")
+            await context.bot.send_message(chat_id=chat.id, text=convert(f"{bot_username} is active in this channel. I will respond to messages posted here."), parse_mode="MarkdownV2")
     else:
         await update.message.reply_html(welcome_message + f" Mention me (e.g. @{bot_username}) to get a response.")
 
@@ -95,14 +95,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     if len(user_message_text) > MAX_USER_MESSAGE_CHARS:
         warning = f"The message is too long ({len(user_message_text)} chars). Max {MAX_USER_MESSAGE_CHARS} chars."
-        await context.bot.send_message(chat_id=chat_id, text=escape(warning), parse_mode="MarkdownV2")
+        await context.bot.send_message(chat_id=chat_id, text=convert(warning), parse_mode="MarkdownV2")
         return
 
     if chat_id not in user_gemini_chats:
         try:
             user_gemini_chats[chat_id] = gemini_model.start_chat(history=[])
         except Exception as e:
-            await context.bot.send_message(chat_id=chat_id, text=escape("Error starting Gemini chat."), parse_mode="MarkdownV2")
+            await context.bot.send_message(chat_id=chat_id, text=convert("Error starting Gemini chat."), parse_mode="MarkdownV2")
             return
 
     try:
@@ -111,9 +111,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         chunks = split_message(gemini_response, MAX_TELEGRAM_MESSAGE_CHARS)
         for i, part in enumerate(chunks):
             header = f"(Part {i+1}/{len(chunks)})\n\n" if len(chunks) > 1 else ""
-            await context.bot.send_message(chat_id=chat_id, text=escape(header + part), parse_mode="MarkdownV2")
+            await context.bot.send_message(chat_id=chat_id, text=convert(header + part), parse_mode="MarkdownV2")
     except Exception as e:
-        await context.bot.send_message(chat_id=chat_id, text=escape("Error communicating with Gemini."), parse_mode="MarkdownV2")
+        await context.bot.send_message(chat_id=chat_id, text=convert("Error communicating with Gemini."), parse_mode="MarkdownV2")
 
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update and update.effective_chat and update.effective_chat.type == "private":
